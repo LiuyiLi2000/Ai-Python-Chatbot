@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>AI Chatbot</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="/static/style.css" rel="stylesheet" />
+</head>
+<body>
+  <div class="container">
+    <h2>🤖 AI Chatbot</h2>
+    {% if use_fake %}
+      <div class="banner">Mock mode (no API key) — running fully offline.</div>
+    {% else %}
+      <div class="banner success">Live mode — using OpenAI API.</div>
+    {% endif %}
+
+    <div id="chat" class="chat"></div>
+
+    <div class="input-row">
+      <input id="question" type="text" placeholder="Type your question..." />
+      <button id="askBtn">Ask</button>
+    </div>
+  </div>
+
+  <script>
+    const chat = document.getElementById('chat');
+    const input = document.getElementById('question');
+    const btn = document.getElementById('askBtn');
+
+    function appendBubble(text, role) {
+      const div = document.createElement('div');
+      div.className = 'bubble ' + (role === 'user' ? 'user' : 'bot');
+      div.textContent = text;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    async function ask() {
+      const q = input.value.trim();
+      if (!q) return;
+      appendBubble(q, 'user');
+      input.value = '';
+      btn.disabled = true;
+
+      try {
+        const res = await fetch('/get_response', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ question: q })
+        });
+        const data = await res.json();
+        if (data.answer) {
+          appendBubble(data.answer, 'bot');
+        } else if (data.error) {
+          appendBubble('Error: ' + data.error, 'bot');
+        } else {
+          appendBubble('Unknown response.', 'bot');
+        }
+      } catch (e) {
+        appendBubble('Network error: ' + e, 'bot');
+      } finally {
+        btn.disabled = false;
+        input.focus();
+      }
+    }
+
+    btn.addEventListener('click', ask);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') ask();
+    });
+
+    // autofocus
+    input.focus();
+  </script>
+</body>
+</html>
