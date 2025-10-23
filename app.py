@@ -8,7 +8,7 @@ from langchain_community.vectorstores import Chroma
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import CharacterTextSplitter
 
-# Runnable 组合（不依赖过时 chains 模块）
+# Modern Runnable-based workflow (no deprecated `chains` dependency)
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
@@ -18,14 +18,14 @@ from langchain_community.embeddings.fake import FakeEmbeddings
 app = Flask(__name__)
 CORS(app)
 
-# -------------------- 配置 --------------------
-PDF_PATH = "sample.pdf"  # 没有也没关系，会用假文档
+# -------------------- CONFIG --------------------
+PDF_PATH = "sample.pdf"  # Optional local reference document
 api_key = os.getenv("OPENAI_API_KEY")
-use_fake = not bool(api_key)  # 无 API Key 时自动进入 mock 模式（离线）
+use_fake = not bool(api_key)  # Offline mock mode if no API key
 EMBED_DIM = 1536
 
-# -------------------- 语料准备 --------------------
-# 1) 文档来源：优先从 sample.pdf 读取；否则使用内置假文档（安全）
+# -------------------- DOCUMENT PREPARATION --------------------
+# 1) Try loading from sample.pdf, otherwise use safe mock documents
 if os.path.exists(PDF_PATH):
     loader = PyPDFLoader(PDF_PATH)
     docs = loader.load()
@@ -42,19 +42,19 @@ else:
         """),
     ]
 
-# 2) 切分
+# 2) Split documents into manageable chunks
 splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
 splits = splitter.split_documents(docs)
 
-# 3) 向量化（无 API 时使用 FakeEmbeddings 完全离线）
+# 3) Create embeddings (FakeEmbeddings for offline mock mode)
 embeddings = FakeEmbeddings(size=EMBED_DIM) if use_fake else OpenAIEmbeddings()
 vectorstore = Chroma.from_documents(splits, embeddings)
 retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-# -------------------- Prompt & LLM --------------------
+# -------------------- PROMPT & MODEL SETUP --------------------
 SYSTEM_PROMPT = (
     "You are a helpful assistant for residents of British Columbia, Canada.\n"
-    "Always redirect them to relevant institutions/resources (names and contact details) "
+    "Always direct users to relevant institutions/resources (include names and contact details), "
     "and never provide legal advice.\n\n"
     "----context:\n{context}\n"
 )
@@ -66,15 +66,15 @@ prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-# LLM：无 API Key 时不要实例化远端模型，直接返回“模拟回答”
+# LLM setup: skip model instantiation if running offline (no API key)
 llm = None if use_fake else ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
 def join_docs(docs_list):
+    """Combine multiple document chunks into a single context string."""
     return "\n\n".join([d.page_content for d in docs_list])
 
-# runnable 链（有 Key 时使用 LLM；无 Key 时用 mock）
+# Runnable chain: real LLM when online, mock output when offline
 if use_fake:
-    # 纯本地 mock：检索文档 + 拼个模拟回答
     def fake_chain(question: str) -> str:
         ctx = join_docs(retriever.invoke(question))
         return f"(Simulated) Based on context:\n{ctx}\n\nYour question: {question}"
@@ -90,27 +90,27 @@ else:
         | StrOutputParser()
     )
 
-# -------------------- 路由 --------------------
+# -------------------- ROUTES --------------------
 @app.route("/")
 def home():
-    # 前端页
+    """Serve frontend HTML."""
     return render_template("index.html", use_fake=use_fake)
 
 @app.route("/get_response", methods=["POST"])
 def get_response():
+    """Main chatbot endpoint: receives user question, returns AI (or simulated) answer."""
     data = request.get_json(force=True) or {}
     question = data.get("question", "").strip()
     if not question:
         return jsonify({"error": "Missing 'question'"}), 400
 
     if use_fake:
-        answer = chain(question)  # 本地 fake
+        answer = chain(question)
     else:
-        answer = chain.invoke(question)  # 真调用
+        answer = chain.invoke(question)
 
     return jsonify({"answer": answer})
 
 if __name__ == "__main__":
-    # 生产请关掉 debug，用 WSGI/ASGI 部署
+    # Development server (do not use in production)
     app.run(host="127.0.0.1", port=5000, debug=True)
-
